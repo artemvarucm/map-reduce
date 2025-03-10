@@ -8,6 +8,6 @@ for line in sys.stdin:
     line = line.replace('\n', '')
     urlLine = re.search(r'"(.*)"', line)
     if urlLine:
-        url = urlLine.group(1).split(" ")[1]
-        urlNoQuery = url.split("?")[0] # elimina el query
+        url = urlLine.group(1).split(" ")[1] # GET /index?search=1 HTTP -> se queda con /index?search=1
+        urlNoQuery = url.split("?")[0] # elimina el query -> se queda con /index
         print(urlNoQuery.lower() + "\t1")

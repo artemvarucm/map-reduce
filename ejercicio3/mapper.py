@@ -1,7 +1,7 @@
 #!/usr/bin/python
 
 import sys
-# cat GOOG.csv | python3 mapper.py | python3 reducer.py
+# cat GOOG.csv | python3 mapper.py | sort | python3 reducer.py
 for line in sys.stdin:
     line = line.replace('\n', '')
     csvLine = line.split(",")

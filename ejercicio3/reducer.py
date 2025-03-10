@@ -17,6 +17,7 @@ for line in sys.stdin:
         if prev != "":
             print(prev + '\t' + str(sum / count) + '\t' + str(count))
         prev = key
+        sum = float(avg_row) * int(cnt_row)
         count = int(cnt_row)
 
 print(prev + '\t' + str(sum / count) + '\t' + str(count))
