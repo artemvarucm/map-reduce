@@ -1,3 +1,5 @@
+#!/usr/bin/python
+
 import sys
 # cat ml-latest-small/ratings.csv | python3 mapperJob1.py | sort | python3 reducerJob1.py | python3 mapperJob2.py
 for line in sys.stdin:
