@@ -1,4 +1,5 @@
 #!/usr/bin/python
+# Mismo codigo que mapper. Utilizar 1 reducer (-numReduceTasks 1) al ejecutar.
 import sys
 import bisect
 TOP_K = 20
