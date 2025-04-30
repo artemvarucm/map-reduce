@@ -20,7 +20,5 @@ rdd = sc.textFile(sys.argv[1])
 urls_rdd = rdd.map(extract_url).filter(lambda x: x is not None)
 url_counts = urls_rdd.map(lambda url: (url, 1)).reduceByKey(lambda a, b: a + b)
 top_urls = url_counts.takeOrdered(TOP_K, key=lambda x: -x[1])
-with open(sys.argv[2], "w") as file:
-    for url in top_urls:
-        file.write(str(url))
-        file.write('\n')
+output_rdd = sc.parallelize(top_urls)
+output_rdd.saveAsTextFile(sys.argv[2])
