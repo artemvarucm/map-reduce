@@ -4,13 +4,13 @@ Genera una codificación tipo bolsa de palabras (una fila por mensaje de commit)
 Se puede controlar el tamaño del vocabulario (N) y excluir las palabras vacías (stopwords).
 
 Uso:
-    spark-submit solution.py <ruta_entrada> <ruta_salida> <tam_vocabulario> <usar_stopwords>
+    spark-submit solution.py <ruta_entrada> <ruta_salida> <tam_vocabulario> <ignore_stopwords>
     
 Argumentos:
     ruta_entrada        Ruta a los archivos JSON de entrada desde GHArchive
     ruta_salida         Ruta donde se guardarán los archivos CSV de salida
     tam_vocabulario     Tamaño del vocabulario, cuántas columnas de la bolsa de palabras habrá
-    remove_stopwords    1 o 0 (indica si se deben ignorar las stopwords)
+    ignore_stopwords    1 o 0 (indica si se deben ignorar las stopwords)
 
 IMPORTANTE: CUANDO SE LEA EL ARCHIVO DE SALIDA USAR multiLine = True en spark.read.csv
 
@@ -18,7 +18,7 @@ IMPORTANTE: CUANDO SE LEA EL ARCHIVO DE SALIDA USAR multiLine = True en spark.re
 
 import sys
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, explode, lower, split, count, desc, concat_ws
+from pyspark.sql.functions import col, explode, lower, split, count, desc, concat_ws, broadcast
 
 # Argumentos
 input_path = sys.argv[1]
@@ -80,6 +80,7 @@ vocabulary = df_words_encoded.groupBy("word") \
     .orderBy(desc("total_count")) \
     .limit(TOP_K)
 
+# para acelerar el pivot
 vocabulary_list = [row["word"] for row in vocabulary.collect()]
 
 # solo nos quedamos con palabras que entran en el vocabulario
@@ -87,7 +88,7 @@ df_top_word_counts = df_words_encoded.filter(col("word").isin(vocabulary_list)) 
     .groupBy(idColName, "word").agg(count("*").alias("count"))
 
 # creamos la bolsa de palabras
-df_top_encoding = df_top_word_counts.groupBy(idColName).pivot("word").sum("count").na.fill(0)
+df_top_encoding = df_top_word_counts.groupBy(idColName).pivot("word", vocabulary_list).sum("count").na.fill(0)
 
 # añadimos la bolsa de palabras a cada mensaje
 df_encoded_with_text = df_messages.join(df_top_encoding, on=idColName).drop(idColName)
