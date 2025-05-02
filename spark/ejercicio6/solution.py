@@ -18,7 +18,7 @@ IMPORTANTE: CUANDO SE LEA EL ARCHIVO DE SALIDA USAR multiLine = True en spark.re
 
 import sys
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, explode, lower, split, count, desc, monotonically_increasing_id
+from pyspark.sql.functions import col, explode, lower, split, count, desc, concat_ws
 
 # Argumentos
 input_path = sys.argv[1]
@@ -64,8 +64,9 @@ df_commits = df.filter(col("type") == "PushEvent") \
 idColName = "@ id @" 
 messageColName = "@ message @"
 
+# id = sha + message 
 # identificador por cada mensaje para que si aparecen 2 mensajes iguales, contribuyan igual a la frecuencia
-df_messages = df_commits.select(col("commit.message").alias(messageColName)).dropna().withColumn(idColName, monotonically_increasing_id())
+df_messages = df_commits.select(col("commit.message").alias(messageColName), concat_ws("-", col("commit.sha"), col("commit.message")).alias(idColName)).dropna()
 
 df_words_encoded = df_messages.withColumn("word", explode(split(lower(col(messageColName)), "\\W+"))).filter(col("word") != "")
 df_words_encoded = df_words_encoded.filter(~col("word").rlike("^[0-9]+$")) # excluimos palabras que son numeros (ej. 2025)
