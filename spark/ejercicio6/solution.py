@@ -1,70 +1,93 @@
-from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, explode, to_timestamp, to_date, hour, lower, split, count, row_number
-import sys
-from pyspark.sql.window import Window
-# datos sacados de aqui: https://www.gharchive.org
+"""
+Procesa mensajes de commits en eventos PushEvent de GitHub a partir de un conjunto de datos en formato JSON.
+Genera una codificación tipo bolsa de palabras (una fila por mensaje de commit) utilizando las N palabras más frecuentes.
+Se puede controlar el tamaño del vocabulario (N) y excluir las palabras vacías (stopwords).
 
-# cogido de aquí: https://gist.github.com/sebleier/554280
-stop_words_english = [
-    "i", "me", "my", "myself", "we", "our", "ours", "ourselves", \
-    "you", "your", "yours", "yourself", "yourselves", "he", "him", \
-    "his", "himself", "she", "her", "hers", "herself", "it", "its", \
-    "itself", "they", "them", "their", "theirs", "themselves", "what", \
-    "which", "who", "whom", "this", "that", "these", "those", "am", "is", \
-    "are", "was", "were", "be", "been", "being", "have", "has", "had", \
-    "having", "do", "does", "did", "doing", "a", "an", "the", "and", \
-    "but", "if", "or", "because", "as", "until", "while", "of", "at", \
-    "by", "for", "with", "about", "against", "between", "into", "through", \
-    "during", "before", "after", "above", "below", "to", "from", "up", "down", \
-    "in", "out", "on", "off", "over", "under", "again", "further", "then", \
-    "once", "here", "there", "when", "where", "why", "how", "all", "any", \
-    "both", "each", "few", "more", "most", "other", "some", "such", "no", \
-    "nor", "not", "only", "own", "same", "so", "than", "too", "very", "s", "t",\
-    "can", "will", "just", "don", "should", "now"\
-    # ESPECIFICO PARA GITHUB 
-    "github", "com",
-    "fix", "update", "add", "remove", "refactor", "change", "improve", "make", "use",
-    "clean", "bump", "merge", "pull", "push", "test", "build", "release", "upgrade",
-    "initial", "revert", "work", "move", "convert", "rename",
-    "file", "files", "code", "commit", "version", "branch", "repo", "repository",
-    "module", "script", "line", "tag", "class", "method", "function", "project",
-    "minor", "major", "new", "old", "default", "final", "debug", "temporary", "latest",
-    "next", "prev", "current", "base",
-    "typo", "issue", "fixes", "closes", "adds", "removes", "docs", "doc", "testcase",
-    "tests", "test", "ci", "workflow", "github", "action", "actions", "log", "logging",
-    "dependancy", "updated", "readme", "dependabot", "bot", "issues", "dev"
+Uso:
+    spark-submit solution.py <ruta_entrada> <ruta_salida> <tam_vocabulario> <usar_stopwords>
+    
+Argumentos:
+    ruta_entrada        Ruta a los archivos JSON de entrada desde GHArchive
+    ruta_salida         Ruta donde se guardarán los archivos CSV de salida
+    tam_vocabulario     Tamaño del vocabulario, cuántas columnas de la bolsa de palabras habrá
+    remove_stopwords    1 o 0 (indica si se deben ignorar las stopwords)
+
+IMPORTANTE: CUANDO SE LEA EL ARCHIVO DE SALIDA USAR multiLine = True en spark.read.csv
+
+"""
+
+import sys
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, explode, lower, split, count, desc, monotonically_increasing_id
+
+# Argumentos
+input_path = sys.argv[1]
+output_path = sys.argv[2]
+TOP_K = int(sys.argv[3])
+REMOVE_STOPWORDS = sys.argv[4].lower() == "1"
+
+
+stop_words_english = [ # https://gist.github.com/sebleier/554280
+    "i", "me", "my", "myself", "we", "our", "ours", "ourselves", "you", "your", "yours", "yourself",
+    "yourselves", "he", "him", "his", "himself", "she", "her", "hers", "herself", "it", "its",
+    "itself", "they", "them", "their", "theirs", "themselves", "what", "which", "who", "whom",
+    "this", "that", "these", "those", "am", "is", "are", "was", "were", "be", "been", "being",
+    "have", "has", "had", "having", "do", "does", "did", "doing", "a", "an", "the", "and", "but",
+    "if", "or", "because", "as", "until", "while", "of", "at", "by", "for", "with", "about",
+    "against", "between", "into", "through", "during", "before", "after", "above", "below", "to",
+    "from", "up", "down", "in", "out", "on", "off", "over", "under", "again", "further", "then",
+    "once", "here", "there", "when", "where", "why", "how", "all", "any", "both", "each", "few",
+    "more", "most", "other", "some", "such", "no", "nor", "not", "only", "own", "same", "so",
+    "than", "too", "very", "s", "t", "can", "will", "just", "don", "should", "now",
+    
+    # para GitHub
+    "github", "com", "fix", "update", "add", "remove", "refactor", "change", "improve", "make", "use",
+    "clean", "bump", "merge", "pull", "push", "test", "build", "release", "upgrade", "initial",
+    "revert", "work", "move", "convert", "rename", "file", "files", "code", "commit", "version",
+    "branch", "repo", "repository", "module", "script", "line", "tag", "class", "method", "function",
+    "project", "minor", "major", "new", "old", "default", "final", "debug", "temporary", "latest",
+    "next", "prev", "current", "base", "typo", "issue", "fixes", "closes", "adds", "removes", "docs",
+    "doc", "testcase", "tests", "ci", "workflow", "action", "actions", "log", "logging", "dependancy",
+    "updated", "readme", "dependabot", "bot", "issues", "dev"
 ]
 
-TOP_K = 50 # puede ser un cmd argument
 spark = SparkSession.builder.appName("Ej6").getOrCreate()
-sc = spark.sparkContext
-df = spark.read.json(sys.argv[1])
 
-# cogemos eventos que son push, porque son los que tienen commits
-df_commits = df.filter(col("type") == "PushEvent")
-# pueden haber varios commits
-df_commits = df_commits.select(
-    to_timestamp(col("created_at")).alias("timestamp"),
-    explode("payload.commits").alias("commit")
-)
-df_commits = df_commits.withColumn("day", to_date("timestamp")) \
-                       .withColumn("hour", hour("timestamp"))
+# datos sacados de aqui: https://www.gharchive.org
+df = spark.read.json(input_path) 
 
-df_commits = df_commits.select("day", "hour", "commit.message")
+# Solo cogemos eventos de commits y convertimos la lista de commits en muchas filas con explode:
+df_commits = df.filter(col("type") == "PushEvent") \
+    .select(explode("payload.commits").alias("commit"))
 
-# extraemos palabras
-df_words = df_commits.withColumn("word", explode(split(lower(col("message")), "\\W+")))
+# porque si no pueden haber una palabra asi
+idColName = "@ id @" 
+messageColName = "@ message @"
 
-# quitamos las palabras vacias y stopwords
-df_words = df_words.filter((col("word") != "") & (~col("word").isin(stop_words_english)))
-df_words = df_words.filter(~col("word").rlike("^[0-9]+$"))
-df_counts = df_words.groupBy(["day", "hour", "word"])\
-    .agg(count("*").alias("count"))
+# identificador por cada mensaje para que si aparecen 2 mensajes iguales, contribuyan igual a la frecuencia
+df_messages = df_commits.select(col("commit.message").alias(messageColName)).dropna().withColumn(idColName, monotonically_increasing_id())
 
-window_spec = Window.partitionBy("day", "hour").orderBy(col("count").desc())
+df_words_encoded = df_messages.withColumn("word", explode(split(lower(col(messageColName)), "\\W+"))).filter(col("word") != "")
+df_words_encoded = df_words_encoded.filter(~col("word").rlike("^[0-9]+$")) # excluimos palabras que son numeros (ej. 2025)
 
-# seleccionamos por cada hora y dia las TOP_K palabras más repetidas
-df_top_words = df_counts.withColumn("rank", row_number().over(window_spec)) \
-    .filter(col("rank") <= TOP_K) \
-    .drop("rank")
-df_top_words.write.csv(sys.argv[2], header=True, mode="overwrite")
+if REMOVE_STOPWORDS: # quitamos stop words
+    df_words_encoded = df_words_encoded.filter(~col("word").isin(stop_words_english))
+
+# vocabulario (top_k palabras mas frecuentes)
+vocabulary = df_words_encoded.groupBy("word") \
+    .agg(count("*").alias("total_count")) \
+    .orderBy(desc("total_count")) \
+    .limit(TOP_K)
+
+vocabulary_list = [row["word"] for row in vocabulary.collect()]
+
+# solo nos quedamos con palabras que entran en el vocabulario
+df_top_word_counts = df_words_encoded.filter(col("word").isin(vocabulary_list)) \
+    .groupBy(idColName, "word").agg(count("*").alias("count"))
+
+# creamos la bolsa de palabras
+df_top_encoding = df_top_word_counts.groupBy(idColName).pivot("word").sum("count").na.fill(0)
+
+# añadimos la bolsa de palabras a cada mensaje
+df_encoded_with_text = df_messages.join(df_top_encoding, on=idColName).drop(idColName)
+df_encoded_with_text.write.csv(output_path, header=True, mode="overwrite")
