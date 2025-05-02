@@ -19,7 +19,7 @@ IMPORTANTE: CUANDO SE LEA EL ARCHIVO DE SALIDA USAR multiLine = True en spark.re
 import sys
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, explode, lower, split, count, desc, concat_ws, broadcast
-
+from time import time
 # Argumentos
 input_path = sys.argv[1]
 output_path = sys.argv[2]
@@ -55,7 +55,7 @@ spark = SparkSession.builder.appName("Ej6").getOrCreate()
 
 # datos sacados de aqui: https://www.gharchive.org
 df = spark.read.json(input_path) 
-
+t_0 = time()
 # Solo cogemos eventos de commits y convertimos la lista de commits en muchas filas con explode:
 df_commits = df.filter(col("type") == "PushEvent") \
     .select(explode("payload.commits").alias("commit"))
@@ -93,3 +93,4 @@ df_top_encoding = df_top_word_counts.groupBy(idColName).pivot("word", vocabulary
 # añadimos la bolsa de palabras a cada mensaje
 df_encoded_with_text = df_messages.join(df_top_encoding, on=idColName).drop(idColName)
 df_encoded_with_text.write.csv(output_path, header=True, mode="overwrite")
+print(time() - t_0, "seconds elapsed")
